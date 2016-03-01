@@ -1,103 +1,62 @@
-# latest version of this file can be found at
-# https://android.googlesource.com/platform/external/lldb-utils
-#
 # inputs
-# $PROJ - project name
+# $PROJ - project name (cmake|ninja|swig)
 # $VER - project version
-# $1 - (temporary) output directory
-# $2 - build directory for build artefacts
-# $3 - build number
+# $1 - name of this file
 #
 # this file does the following:
 #
 # 1) define the following env vars
-#    OS - linux|darwin|windows
-#    CORES - numer of cores (for parallel builds)
-#    PATH (with appropriate compilers)
-#    CFLAGS/CXXFLAGS/LDFLAGS
-#    RD - root directory for source and object files
-#    INSTALL - install directory
-#    SCRIPT_FILE - absolute path to the parent build script
-#    SCRIPT_DIR - absolute path to the parent build script's directory
-#    COMMON_FILE - absolute path to this file
-# 2) cd $RD
+# OS - linux|darwin|windows
+# USER - username
+# CORES - numer of cores (for parallel builds)
+# PATH (with appropriate compilers)
+# CFLAGS/CXXFLAGS/LDFLAGS
+# RD - root directory for source and object files
+# INSTALL - install directory/git repo root
+# SCRIPT_FILE=absolute path to the parent build script
+# SCRIPT_DIR=absolute path to the parent build script's directory
+# COMMON_FILE=absolute path to this file
+
 #
-# after placing all your build products into $INSTALL you should call finalize_build to produce
-# the final build artifact
-
-# exit on error
-set -e
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[1]}")" && pwd -P)"
-SCRIPT_FILE="$SCRIPT_DIR/$(basename "${BASH_SOURCE[1]}")"
-COMMON_FILE="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
-
-# calculate the root directory from the script path
-# this script lives three directories down from the root
-# external/lldb-utils/prebuilts/build-common.sh
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
-cd "$ROOT_DIR"
-
-function die() {
-	echo "$*" > /dev/stderr
-	echo "Usage: $0 <out_dir> <dest_dir> <build_number>" > /dev/stderr
-	exit 1
-}
-
-(($# > 3)) && die "[$0] Unknown parameter: $4"
-
-OUT="$1"
-DEST="$2"
-BNUM="$3"
-
-[ ! "$OUT"  ] && die "## Error: Missing out folder"
-[ ! "$DEST" ] && die "## Error: Missing destination folder"
-[ ! "$BNUM" ] && die "## Error: Missing build number"
-
-mkdir -p "$OUT" "$DEST"
-OUT="$(cd "$OUT" && pwd -P)"
-DEST="$(cd "$DEST" && pwd -P)"
-
-cat <<END_INFO
-## Building $PROJ ##
-## Out Dir  : $OUT
-## Dest Dir : $DEST
-## Build Num: $BNUM
-
-END_INFO
+# 2) create an empty tmp directory at /tmp/$PROJ-$USER
+# 3) checkout the destination git repo to /tmp/prebuilts/$PROJ/$OS-x86/$VER
+# 4) cd $RD
 
 UNAME="$(uname)"
-UPSTREAM=https://android.googlesource.com/platform/prebuilts
 case "$UNAME" in
 Linux)
+    SCRATCH=/tmp
     OS='linux'
     INSTALL_VER=$VER
     ;;
 Darwin)
+    SCRATCH=/tmp
     OS='darwin'
-    OSX_MIN=10.8
-    export CC=clang
-    export CXX=$CC++
+    OSX_MIN=10.6
     export CFLAGS="$CFLAGS -mmacosx-version-min=$OSX_MIN"
-    export CXXFLAGS="$CXXFLAGS -mmacosx-version-min=$OSX_MIN -stdlib=libc++"
+    export CXXFLAGS="$CXXFLAGS -mmacosx-version-min=$OSX_MIN"
     export LDFLAGS="$LDFLAGS -mmacosx-version-min=$OSX_MIN"
     INSTALL_VER=$VER
     ;;
 *_NT-*)
+    if [[ "$UNAME" == CYGWIN_NT-* ]]; then
+        PATH_PREFIX=/cygdrive
+    else
+        # MINGW32_NT-*
+        PATH_PREFIX=
+    fi
+    SCRATCH=$PATH_PREFIX/d/src/tmp
+    USER=$USERNAME
     OS='windows'
     CORES=$NUMBER_OF_PROCESSORS
+    # VS2013 x64 Native Tools Command Prompt
     case "$MSVS" in
-    2015)
-        devenv() {
-            cmd /c "${VS140COMNTOOLS}VsDevCmd.bat" '&' devenv.com "$@"
-        }
-        INSTALL_VER=${VER}_${MSVS}
-        ;;
     2013)
-        devenv() {
-            cmd /c "${VS120COMNTOOLS}VsDevCmd.bat" '&' devenv.com "$@"
-        }
-        INSTALL_VER=${VER}_${MSVS}
+        export PATH="$PATH_PREFIX/c/Program Files (x86)/Microsoft Visual Studio 12.0/VC/bin/amd64/":"$PATH_PREFIX/c/Program Files (x86)/Microsoft Visual Studio 12.0/Common7/IDE/":"$PATH_PREFIX/c/Program Files (x86)/Windows Kits/8.1/bin/x64":"$PATH"
+        export INCLUDE="C:\\Program Files (x86)\\Microsoft Visual Studio 12.0\\VC\\INCLUDE;C:\\Program Files (x86)\\Microsoft Visual Studio 12.0\\VC\\ATLMFC\\INCLUDE;C:\\Program Files (x86)\\Windows Kits\\8.1\\include\\shared;C:\\Program Files (x86)\\Windows Kits\\8.1\\include\\um;C:\\Program Files (x86)\\Windows Kits\\8.1\\include\\winrt;"
+        export LIB="C:\\Program Files (x86)\\Microsoft Visual Studio 12.0\\VC\\LIB\\amd64;C:\\Program Files (x86)\\Microsoft Visual Studio 12.0\\VC\\ATLMFC\\LIB\\amd64;C:\\Program Files (x86)\\Windows Kits\\8.1\\lib\\winv6.3\\um\\x64;"
+        export LIBPATH="C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319;C:\\Program Files (x86)\\Microsoft Visual Studio 12.0\\VC\\LIB\\amd64;C:\\Program Files (x86)\\Microsoft Visual Studio 12.0\\VC\\ATLMFC\\LIB\\amd64;C:\\Program Files (x86)\\Windows Kits\\8.1\\References\\CommonConfiguration\\Neutral;C:\\Program Files (x86)\\Microsoft SDKs\\Windows\\v8.1\\ExtensionSDKs\\Microsoft.VCLibs\\12.0\\References\\CommonConfiguration\\neutral;"
+        INSTALL_VER=${VER}_vs${MSVS}
         ;;
     *)
         # g++/make build
@@ -112,7 +71,7 @@ Darwin)
     ;;
 esac
 
-RD=$OUT/$PROJ
+RD=$SCRATCH/$PROJ-$USER
 INSTALL="$RD/install"
 
 cd /tmp # windows can't delete if you're in the dir
@@ -121,33 +80,37 @@ mkdir -p $INSTALL
 mkdir -p $RD
 cd $RD
 
-# clone prebuilt gcc
-case "$OS" in
-linux)
-    # can't get prebuilt clang working so we're using host clang-3.5 https://b/22748915
-    #CLANG_DIR=$RD/clang
-    #git clone $UPSTREAM/clang/linux-x86/host/3.6 $CLANG_DIR
-    #export CC="$CLANG_DIR/bin/clang"
-    #export CXX="$CC++"
-    export CC=clang-3.5
-    export CXX=clang++-3.5
+# OSX lacks a "realpath" bash command
+realpath() {
+    [[ $1 = /* ]] && echo "$1" || echo "$PWD/${1#./}"
+}
 
-    GCC_DIR=$RD/gcc
-    git clone $UPSTREAM/gcc/linux-x86/host/x86_64-linux-glibc2.15-4.8 $GCC_DIR
+SCRIPT_FILE=$(realpath "$0")
+SCRIPT_DIR="$(dirname "$SCRIPT_FILE")"
+COMMON_FILE="$SCRIPT_DIR/$1"
 
-    find "$GCC_DIR" -name x86_64-linux -exec ln -fns {} {}-gnu \;
+commit_and_push()
+{
+    # check into a local git clone
+    rm -rf $SCRATCH/prebuilts/$PROJ/
+    mkdir -p $SCRATCH/prebuilts/$PROJ/
+    cd $SCRATCH/prebuilts/$PROJ/
+    git clone https://android.googlesource.com/platform/prebuilts/$PROJ/$OS-x86
+    GIT_REPO="$SCRATCH/prebuilts/$PROJ/$OS-x86"
+    cd $GIT_REPO
+    git rm -r * || true  # ignore error caused by empty directory
+    mv $INSTALL/* $GIT_REPO
+    cp $SCRIPT_FILE $GIT_REPO
+    cp $COMMON_FILE $GIT_REPO
 
-    FLAGS+=(-fuse-ld=gold)
-    FLAGS+=(--gcc-toolchain="$GCC_DIR")
-    FLAGS+=(--sysroot "$GCC_DIR/sysroot")
-    FLAGS+=(-B"$GCC_DIR/bin/x86_64-linux-")
-    export CFLAGS="$CFLAGS ${FLAGS[*]}"
-    export CXXFLAGS="$CXXFLAGS ${FLAGS[*]}"
-    export LDFLAGS="$LDFLAGS -m64"
-    ;;
-esac
+    git add .
+    if [ -n "$ANDROID_EMAIL" ]; then
+        git config user.email $ANDROID_EMAIL
+    fi
+    git commit -m "Adding binaries for $INSTALL_VER"
 
-function finalize_build() {
-    cp "$SCRIPT_FILE" "$COMMON_FILE" "$INSTALL"
-    (cd "$INSTALL" && zip --symlinks -r "$DEST/$PROJ-$BNUM.zip" .)
+    # execute this command to upload
+    #git push origin HEAD:refs/for/master
+
+    rm -rf $RD || true  # ignore error
 }
